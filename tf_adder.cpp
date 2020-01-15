@@ -73,19 +73,20 @@ int main(int argc, char **argv)
   tf2_msgs::TFMessage horizon;
   tf2_ros::Buffer tfBuffer;
   tf2_ros::TransformListener tfListener(tfBuffer);
-  geometry_msgs::TransformStamped base_vel;
-  base_vel.child_frame_id = "none";
 
   std::cout << "Starting to read the bag  \n";
   // Load all messages
   BOOST_FOREACH(rosbag::MessageInstance const m, view)
   {
 
-    //cleaning all the transforms
+    //cleaning all the dynamic transforms
     horizon.transforms.clear();
 
-    // writing original topics
-    bag_out.write(m.getTopic(), m.getTime(), m, m.getConnectionHeader());
+    // writing point cloud original topic
+    if (m.getTopic() == velodyne_p || ("/" + m.getTopic() == velodyne_p )) // /velodyne/front/labelled
+    {
+      bag_out.write(m.getTopic(), m.getTime(), m, m.getConnectionHeader());
+    }
 
     if (m.getTopic() == imu || ("/" + m.getTopic() == imu )) // /vn100/imu
     {
@@ -114,25 +115,8 @@ int main(int argc, char **argv)
         horizon.transforms.push_back(footprint);
         // publishing imu data
         imu_pub.publish(imu_data);
-        //utm to map
-        utm_map.transform.rotation.x = 0;
-        utm_map.transform.rotation.y = 0;
-        utm_map.transform.rotation.z = 0;
-        utm_map.transform.rotation.w = 1;
-        utm_map.transform.translation.x = 331275.383734;
-        utm_map.transform.translation.y = 6250099.29659;
-        utm_map.transform.translation.z = 0;
-        utm_map.header.stamp = imu_data->header.stamp;
-        utm_map.header.frame_id = "utm";
-        utm_map.child_frame_id = "map";
-        horizon.transforms.push_back(utm_map);
-
-
-        if (base_vel.child_frame_id == "velodyne_front_link")
-        {
-         base_vel.header.stamp = m.getTime();
-         horizon.transforms.push_back(base_vel);
-        }
+        // writing imu original topic
+        bag_out.write(m.getTopic(), m.getTime(), m, m.getConnectionHeader());
 
       }
     }
@@ -144,6 +128,8 @@ int main(int argc, char **argv)
       {
         // publishing gps data
         gps_pub.publish(gps_data);
+        // writing imu original topic
+        bag_out.write(m.getTopic(), m.getTime(), m, m.getConnectionHeader());
       }
     }
 
@@ -154,22 +140,42 @@ int main(int argc, char **argv)
       {
         // publishing odometry data
         odom_pub.publish(od);
+        // writing imu original topic
+        bag_out.write(m.getTopic(), m.getTime(), m, m.getConnectionHeader());
       }
     }
     
-    if (m.getTopic() == tf_msg_stat || ("/" + m.getTopic() == tf_msg_stat))
+   if (m.getTopic() == tf_msg_stat || ("/" + m.getTopic() == tf_msg_stat))
     {
       tf2_msgs::TFMessage::ConstPtr tf_info = m.instantiate<tf2_msgs::TFMessage>();
       if (tf_info != NULL)
       {
-        for(int i=0; i < tf_info->transforms.size();i++){
+        tf2_msgs::TFMessage tf_static;
+        geometry_msgs::TransformStamped base_vel, utm_map;
+
+        for(int i=0; i < tf_info->transforms.size();i++)
+        {
           if (tf_info->transforms[i].header.frame_id == "base_link"){
             if (tf_info->transforms[i].child_frame_id == "velodyne_front_link"){
                 base_vel = tf_info->transforms[i];
-                horizon.transforms.push_back(base_vel);
+                tf_static.transforms.push_back(base_vel);
             }
           }
         }
+        //utm to map
+        utm_map.transform.rotation.x = 0;
+        utm_map.transform.rotation.y = 0;
+        utm_map.transform.rotation.z = 0;
+        utm_map.transform.rotation.w = 1;
+        utm_map.transform.translation.x = 331275.383734;
+        utm_map.transform.translation.y = 6250099.29659;
+        utm_map.transform.translation.z = 0;
+        utm_map.header.stamp = m.getTime();
+        utm_map.header.frame_id = "utm";
+        utm_map.child_frame_id = "map";
+        tf_static.transforms.push_back(utm_map);
+        // writting tf_static with only map to utm and velodyne to base_link
+        bag_out.write("/tf_static", m.getTime(), tf_static);
       }
     }
 
@@ -182,7 +188,6 @@ int main(int argc, char **argv)
       horizon.transforms.push_back(map_odom);
     }
     catch (tf2::TransformException &ex) {
-
     }
    // Odom to base_link
     try{
@@ -191,9 +196,8 @@ int main(int argc, char **argv)
       horizon.transforms.push_back(odom_basel);
     }
     catch (tf2::TransformException &ex) {
-
     }
-
+   // Writing all dynamic transforms
     if (horizon.transforms.size()>0)
       bag_out.write("/tf", m.getTime(), horizon);
 
