@@ -44,6 +44,7 @@
 
 #include <thread>
 #include <functional>
+#include <algorithm>
 
 sensor_msgs::PointCloud2 octo_pc;
 
@@ -72,7 +73,7 @@ int main(int argc, char **argv)
   bag_out.open(bagname_out, rosbag::bagmode::Write);
 
   // Topics' name
-  std::string velodyne_p =  "/velodyne/front/label_uncertainties";
+  std::string velodyne_p =  "/velodyne/front/label";
   std::string tf_msg     =  "/tf";
   std::string tf_msg_stat=  "/tf_static";
 
@@ -102,7 +103,7 @@ int main(int argc, char **argv)
   Eigen::Matrix4d  Matrix_bl_vl, Matrix_od_bl, Matrix_od_vl, Matrix_vl_od ;
 
   //Octomap
-  octomap::ClassificationOcTree* m_octree = new octomap::ClassificationOcTree(0.1); // resolution
+  octomap::ClassificationOcTree* m_octree = new octomap::ClassificationOcTree(0.2); // resolution
   m_octree->setProbHit(0.9);
   m_octree->setProbMiss(0.2);
   m_octree->setClampingThresMin(0.12);
@@ -182,12 +183,14 @@ int main(int argc, char **argv)
      if (vel_p != NULL)
      {
 
-       pcl::PointCloud<pcl::PointXYZLU> pc;
+       pcl::PointCloud<pcl::PointXYZL> pc;
        pcl::PointCloud<pcl::PointXYZ>  origin;
        pcl::fromROSMsg(*vel_p, pc);
+       std::cout << " pc \n" ;
        Matrix_od_vl = Matrix_od_bl*Matrix_bl_vl;
        Matrix_vl_od = Matrix_od_vl.pow(-1);
        pcl::transformPointCloud(pc, pc, Matrix_od_vl);
+
 
        octomap::point3d sensorOrigin; // = pointTfToOctomap(sensorOriginTf); ojo aqui
        sensorOrigin.x()=Matrix_od_vl(0,3);
@@ -209,7 +212,7 @@ int main(int argc, char **argv)
 
        octomap::KeySet free_cells, occupied_cells;
 
-       for (pcl::PointCloud<pcl::PointXYZLU>::const_iterator it = pc.begin(); it != pc.end(); ++it){
+       for (pcl::PointCloud<pcl::PointXYZL>::const_iterator it = pc.begin(); it != pc.end(); ++it){
          octomap::point3d point(it->x, it->y, it->z);
          octomap::KeyRay m_keyRay;
          // maxrange check
@@ -223,7 +226,7 @@ int main(int argc, char **argv)
          if (m_octree->coordToKeyChecked(point, key)){
            occupied_cells.insert(key);
            m_octree->updateNode(key, true);
-           uint16_t label = it->label-1;
+           uint16_t label = std::round(std::max((it->label-1.0),0.0));
            if (label == 0)
              label = 1;
 
@@ -341,16 +344,15 @@ int main(int argc, char **argv)
       // mensaje del octomapS
       m_markerPub.publish(occupiedNodesVis);
 
-      bag_out.write("/Octomap", m.getTime(), occupiedNodesVis);
-
       sensor_msgs::PointCloud2 cloud;
       pcl::toROSMsg (pclCloud, cloud);
       cloud.header.frame_id = "odom";
       cloud.header.stamp = vel_p->header.stamp;
       m_pointCloudPub.publish(cloud);
 
-      if (number > 10000)
+      if (std::remainder(number,1000) == 0.0)
         bag_out.write("/Octomap_point_cloud", m.getTime(), cloud);
+     //   bag_out.write("/Octomap", m.getTime(), occupiedNodesVis);
 
       number = number +1 ;
      }
